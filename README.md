@@ -23,6 +23,17 @@ Copy-Item .env.example .env
 py bot.py
 ```
 
+## Запуск в Docker
+
+Для деплоя используйте Dockerfile из репозитория: он устанавливает Chromium и системные зависимости Playwright во время сборки.
+
+```powershell
+docker build -t colledge-top-bot .
+docker run --env-file .env colledge-top-bot
+```
+
+На хостинге выберите сборку через Dockerfile. Если хостинг использует собственную команду сборки без Docker, добавьте в неё `playwright install --with-deps chromium` после установки зависимостей Python.
+
 При первом обновлении бот войдёт на сайт, выберет колледж, прокрутит список с infinite scroll и сохранит результат в `schedule.json`. Пользователю доступны `/start` и `/groups`; после выбора группы бот показывает занятия на сегодня и кнопку всей недели.
 
 ## Важно
