@@ -5,6 +5,7 @@ import html
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -66,6 +67,28 @@ def has_lessons(group: GroupSchedule) -> bool:
 
 def is_displayable_lesson(text: str) -> bool:
     return "физическая культура" not in text.casefold() and "физкультура" not in text.casefold()
+
+
+def lesson_number(lesson_text: str) -> int | None:
+    match = re.search(r"(\d+)\s*$", lesson_text)
+    return int(match.group(1)) if match else None
+
+
+def lesson_parts(group: GroupSchedule, lesson_text: str) -> tuple[int | None, str, str, str]:
+    number = lesson_number(lesson_text)
+    if number is not None:
+        lesson_text = re.sub(r"\s*[^\w\s]\s*\d+\s*$", "", lesson_text)
+    lesson_text = lesson_text.split(f" • {group.name}", 1)[0]
+    parts = [part.strip() for part in lesson_text.split(" • ")]
+    teacher = parts[0] if parts else lesson_text
+    platform = parts[1] if len(parts) > 1 else ""
+    subject = parts[2] if len(parts) > 2 else platform
+    return number, teacher, platform, subject
+
+
+def is_displayable_pair(lesson_text: str) -> bool:
+    number = lesson_number(lesson_text)
+    return number not in {0, 5}
 
 
 def state_for(chat_id: int) -> dict[str, int]:
@@ -130,29 +153,45 @@ def format_schedule(group: GroupSchedule, week_offset: int = 0, only_today: bool
         title = "Расписание на следующую неделю"
     else:
         title = "Расписание на предыдущую неделю"
-    lines = [f"📚 <b>{html.escape(group.name)}</b>", f"<i>{title}</i>", ""]
+    lines = [
+        "╭────────────────────",
+        f"│ 📚 <b>{html.escape(group.name)}</b>",
+        f"│ <i>{title}</i>",
+        "╰────────────────────",
+        "",
+    ]
     found = False
     for day_index in wanted_indexes:
         day = DAY_NAMES[day_index]
-        lessons = [lesson for lesson in days.get(day.casefold(), []) if is_displayable_lesson(lesson.text)]
+        lessons = [
+            lesson for lesson in days.get(day.casefold(), [])
+            if is_displayable_lesson(lesson.text) and is_displayable_pair(lesson.text)
+        ]
         if not lessons:
             continue
         found = True
         lesson_date = week_start + timedelta(days=day_index)
-        lines.append(f"📅 <b>{day}, {lesson_date:%d.%m}</b>")
-        for lesson_number, lesson in enumerate(sorted(lessons, key=lambda item: item.time), start=1):
-            lesson_text = lesson.text.split(f" • {group.name}", 1)[0]
-            parts = [part.strip() for part in lesson_text.split(" • ")]
-            teacher = parts[0] if parts else lesson_text
-            subject = parts[2] if len(parts) > 2 else (parts[1] if len(parts) > 1 else "")
-            lines.append(
-                f"{lesson_number}. <b>{html.escape(lesson.time)}</b>\n"
-                f"   👤 {html.escape(teacher)}\n"
-                f"   📖 {html.escape(subject)}"
-            )
+        lines.extend([
+            f"┏━━ 📅 <b>{day}, {lesson_date:%d.%m}</b>",
+            "┗━━━━━━━━━━━━━━━━━━",
+        ])
+        sorted_lessons = sorted(
+            lessons,
+            key=lambda item: (lesson_number(item.text) is None, lesson_number(item.text) or 0, item.time),
+        )
+        for lesson in sorted_lessons:
+            number, teacher, _platform, subject = lesson_parts(group, lesson.text)
+            pair_label = f"{number}-я пара" if number is not None else "Пара"
+            lesson_lines = [
+                f"🔹 <b>{pair_label}</b>  <code>{html.escape(lesson.time)}</code>",
+                f"   📖 {html.escape(subject)}",
+                f"   👤 {html.escape(teacher)}",
+            ]
+            lines.extend(lesson_lines)
+            lines.append("──────────────")
         lines.append("")
     if not found:
-        return f"📚 <b>{html.escape(group.name)}</b>\n{title}: занятий нет."
+        return f"📚 <b>{html.escape(group.name)}</b>\n\n<i>{title}: занятий нет.</i>"
     return "\n".join(lines).strip()
 
 
@@ -233,6 +272,7 @@ async def back_to_menu(message: Message) -> None:
 
 @dp.message(F.text == "📅 Сегодня")
 async def today(message: Message) -> None:
+    state_for(message.chat.id)["week"] = 0
     await show_selected_schedule(message.chat.id, only_today=True, trigger=message)
 
 
