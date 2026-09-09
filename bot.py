@@ -5,7 +5,6 @@ import html
 import json
 import logging
 import os
-import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -69,25 +68,32 @@ def is_displayable_lesson(text: str) -> bool:
     return "физическая культура" not in text.casefold() and "физкультура" not in text.casefold()
 
 
-def lesson_number(lesson_text: str) -> int | None:
-    match = re.search(r"(\d+)\s*$", lesson_text)
-    return int(match.group(1)) if match else None
+PAIR_BY_START_TIME = {
+    "08:00": 0,
+    "09:00": 1,
+    "10:40": 2,
+    "12:40": 3,
+    "14:20": 4,
+    "16:00": 5,
+}
+
+
+def lesson_number(time: str) -> int | None:
+    start_time = time.split("-", 1)[0].strip()
+    return PAIR_BY_START_TIME.get(start_time)
 
 
 def lesson_parts(group: GroupSchedule, lesson_text: str) -> tuple[int | None, str, str, str]:
-    number = lesson_number(lesson_text)
-    if number is not None:
-        lesson_text = re.sub(r"\s*[^\w\s]\s*\d+\s*$", "", lesson_text)
     lesson_text = lesson_text.split(f" • {group.name}", 1)[0]
     parts = [part.strip() for part in lesson_text.split(" • ")]
     teacher = parts[0] if parts else lesson_text
     platform = parts[1] if len(parts) > 1 else ""
     subject = parts[2] if len(parts) > 2 else platform
-    return number, teacher, platform, subject
+    return None, teacher, platform, subject
 
 
-def is_displayable_pair(lesson_text: str) -> bool:
-    number = lesson_number(lesson_text)
+def is_displayable_pair(time: str) -> bool:
+    number = lesson_number(time)
     return number not in {0, 5}
 
 
@@ -165,7 +171,7 @@ def format_schedule(group: GroupSchedule, week_offset: int = 0, only_today: bool
         day = DAY_NAMES[day_index]
         lessons = [
             lesson for lesson in days.get(day.casefold(), [])
-            if is_displayable_lesson(lesson.text) and is_displayable_pair(lesson.text)
+            if is_displayable_lesson(lesson.text) and is_displayable_pair(lesson.time)
         ]
         if not lessons:
             continue
@@ -177,10 +183,11 @@ def format_schedule(group: GroupSchedule, week_offset: int = 0, only_today: bool
         ])
         sorted_lessons = sorted(
             lessons,
-            key=lambda item: (lesson_number(item.text) is None, lesson_number(item.text) or 0, item.time),
+            key=lambda item: (lesson_number(item.time) is None, lesson_number(item.time) or 0, item.time),
         )
         for lesson in sorted_lessons:
-            number, teacher, _platform, subject = lesson_parts(group, lesson.text)
+            number = lesson_number(lesson.time)
+            _, teacher, _platform, subject = lesson_parts(group, lesson.text)
             pair_label = f"{number}-я пара" if number is not None else "Пара"
             lesson_lines = [
                 f"🔹 <b>{pair_label}</b>  <code>{html.escape(lesson.time)}</code>",
